@@ -80,6 +80,5 @@ pub async fn login(username: String, password: String) -> Result<(), Box<dyn std
         }
     }
 
-    // log!(LogLevel::Error, "Failed to login: {}", response.text().await?);
     Err("Login failed".into())
 }

@@ -46,20 +46,14 @@ Run the CLI with the following commands:
 # Authenticate and acquire a new token
 $ artisan_cli login yourusername yourpassword
 
-# List all nodes
-$ artisan_cli list-nodes
-
-# Get details of a specific node
-$ artisan_cli get-node --node-id node123
-
 # List all runners
 $ artisan_cli list-runners
 
 # Get details of a specific runner
-$ artisan_cli get-runner-details --runner-id runner123
+$ artisan_cli get-runner-details runner123
 
 # Control a runner (e.g., start, stop, restart)
-$ artisan_cli control-runner --runner-id runner123 --command start
+$ artisan_cli control-runner runner123 start
 ```
 
 ---
@@ -89,5 +83,5 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 ---
 
 ## Contact
-For any questions or support, feel free to reach out at yourusername@artisanhosting.com.
+For any questions or support, feel free to reach out at dwhitfield@artisanhosting.net.
 
