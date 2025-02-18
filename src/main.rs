@@ -85,8 +85,9 @@ async fn list_nodes() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(nodes) = api_response.data {
             for node in nodes {
                 let data = format!(
-                    "Node Id: {}, Node Ip: {}, Runners in config: {}, Last Updated: {}",
+                    "Node Id: {}, Node Status: {}, Node Ip: {}, Runners in config: {}, Last Updated: {}",
                     node.identity.id,
+                    node.status,
                     node.ip_address,
                     node.runners.len(),
                     node.last_updated,
