@@ -296,5 +296,5 @@ async fn control_runner(runner_id: &str, command: &str) -> Result<(), Box<dyn st
 }
 
 fn get_base_url() -> &'static str {
-    "https://api.arhst.net/v1/"
+    "https://api.artisanhosting.net/v1/"
 }
