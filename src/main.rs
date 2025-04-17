@@ -1,12 +1,10 @@
 use std::fs::create_dir_all;
 
 use artisan_middleware::{
-    dusa_collection_utils::{functions::current_timestamp, log, logger::LogLevel},
-    portal::{
+    aggregator::BilledUsageSummary, dusa_collection_utils::{functions::current_timestamp, log, logger::{set_log_level, LogLevel}}, portal::{
         ApiResponse, CommandResponse, NodeDetails, NodeInfo, RunnerDetails, RunnerHealth,
         RunnerLogs, RunnerSummary,
-    },
-    timestamp::really_format_unix_timestamp,
+    }, timestamp::format_unix_timestamp
 };
 use auth::{discover, login, whoami};
 use clap::{Parser, Subcommand};
@@ -41,16 +39,22 @@ enum Commands {
     WhoAmI,
     /// Authenticate with the server
     Login { username: String, password: String },
+    /// Get summarized historic usage for a runner instance
+    GetRunnerUsage {
+        runner_id: String,
+        instance_id: String,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    set_log_level(LogLevel::Debug);
     let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
     create_dir_all(&home_dir.join(".artisan_cli"))?;
     let env_file = home_dir.join(".artisan_cli/.env");
 
     dotenv::from_path(env_file).ok();
-    
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -64,11 +68,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Login { username, password } => login(username, password).await?,
         Commands::Discover => discover().await?,
         Commands::WhoAmI => whoami().await?,
+        Commands::GetRunnerUsage {
+            runner_id,
+            instance_id,
+        } => get_runner_usage(&runner_id, &instance_id).await?,
     }
 
     Ok(())
 }
-
 
 async fn list_nodes() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
@@ -150,6 +157,64 @@ async fn get_node(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn get_runner_usage(
+    runner_id: &str,
+    instance_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let token = get_token().await?;
+
+    let url = format!(
+        "{}usage/single/{}/{}",
+        get_base_url(),
+        runner_id,
+        instance_id
+    );
+
+    let response = client.get(&url).bearer_auth(token).send().await?;
+
+    if response.status().is_success() {
+        let api_response: ApiResponse<BilledUsageSummary> =
+            response.json().await?;
+
+        log!(LogLevel::Debug, "{:?}", api_response);
+
+        if let Some(summary) = api_response.data {
+            log!(LogLevel::Info, "Runner ID: {}", summary.runner_id);
+            log!(LogLevel::Info, "Instance ID: {}", summary.instance_id);
+            log!(LogLevel::Info, "Total CPU: {:.2}%", summary.total_cpu);
+            log!(LogLevel::Info, "Peak CPU: {:.2}%", summary.peak_cpu);
+            log!(LogLevel::Info, "Avg RAM: {:.2} MB", summary.avg_memory);
+            log!(LogLevel::Info, "Peak RAM: {:.2} MB", summary.peak_memory);
+            log!(
+                LogLevel::Info,
+                "Data In: {}",
+                format_bytes(summary.total_rx)
+            );
+            log!(
+                LogLevel::Info,
+                "Data Out: {}",
+                format_bytes(summary.total_tx)
+            );
+            log!(
+                LogLevel::Info,
+                "Samples Collected: {}",
+                summary.total_samples
+            );
+        } else {
+            log!(LogLevel::Warn, "No usage summary found.");
+        }
+    } else {
+        log!(
+            LogLevel::Error,
+            "Failed to get usage: {}",
+            response.text().await?
+        );
+    }
+
+    Ok(())
+}
+
 async fn list_runners() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let token = get_token().await?;
@@ -210,6 +275,8 @@ async fn get_runner_details(runner_id: &str) -> Result<(), Box<dyn std::error::E
                         last_check: current_timestamp(),
                         cpu_usage: "-".into(),
                         ram_usage: "-".into(),
+                        tx_bytes: 0,
+                        rx_bytes: 0,
                     }
                 };
 
@@ -220,12 +287,14 @@ async fn get_runner_details(runner_id: &str) -> Result<(), Box<dyn std::error::E
                 };
 
                 let data = format!(
-                    "Instance Id: {}, Status: {}, Uptime: {}, Cpu Usage: {}, Ram Usage: {}, Log Legnth: {}",
+                    "Instance Id: {}, Status: {}, Uptime: {}, Cpu Usage: {}, Ram Usage: {}, Data In: {}, Data Out: {}, Log Legnth: {}",
                     runner.id,
                     runner.status,
                     health_data.uptime,
                     health_data.cpu_usage,
                     health_data.ram_usage,
+                    format_bytes(health_data.rx_bytes),
+                    format_bytes(health_data.tx_bytes),
                     log_data.recent.len(),
                 );
                 log!(LogLevel::Info, "{}", data);
@@ -234,7 +303,11 @@ async fn get_runner_details(runner_id: &str) -> Result<(), Box<dyn std::error::E
             log!(LogLevel::Error, "Runner not found.");
         }
     } else {
-        log!(LogLevel::Error, "Failed to get runner details: {}", response.text().await?);
+        log!(
+            LogLevel::Error,
+            "Failed to get runner details: {}",
+            response.text().await?
+        );
     }
 
     Ok(())
@@ -274,7 +347,7 @@ async fn control_runner(runner_id: &str, command: &str) -> Result<(), Box<dyn st
                     "Executed: {} on {} @ {}",
                     data.command,
                     name,
-                    really_format_unix_timestamp(data.queued_at)
+                    format_unix_timestamp(data.queued_at)
                 )
             }
         } else {
@@ -297,4 +370,25 @@ async fn control_runner(runner_id: &str, command: &str) -> Result<(), Box<dyn st
 
 fn get_base_url() -> &'static str {
     "https://api.artisanhosting.net/v1/"
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    const TB: f64 = GB * 1024.0;
+
+    let bytes_f64 = bytes as f64;
+
+    if bytes_f64 >= TB {
+        format!("{:.2} TB", bytes_f64 / TB)
+    } else if bytes_f64 >= GB {
+        format!("{:.2} GB", bytes_f64 / GB)
+    } else if bytes_f64 >= MB {
+        format!("{:.2} MB", bytes_f64 / MB)
+    } else if bytes_f64 >= KB {
+        format!("{:.2} KB", bytes_f64 / KB)
+    } else {
+        format!("{} B", bytes)
+    }
 }

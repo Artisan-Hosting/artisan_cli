@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-artisan_middleware = "5.1.2"
+#artisan_middleware = "5.1.2"
+artisan_middleware = { git = "https://github.com/Artisan-Hosting/artisan_lib.git" }
 reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
