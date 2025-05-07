@@ -1,10 +1,16 @@
 use std::fs::create_dir_all;
 
 use artisan_middleware::{
-    aggregator::BilledUsageSummary, dusa_collection_utils::{functions::current_timestamp, log, logger::{set_log_level, LogLevel}}, portal::{
-        ApiResponse, CommandResponse, NodeDetails, NodeInfo, RunnerDetails, RunnerHealth,
-        RunnerLogs, RunnerSummary,
-    }, timestamp::format_unix_timestamp
+    aggregator::{BilledUsageSummary, BillingCosts},
+    dusa_collection_utils::{
+        functions::current_timestamp,
+        log,
+        logger::{set_log_level, LogLevel},
+    },
+    portal::{
+        ApiResponse, CommandResponse, NodeDetails, NodeInfo, RunnerDetails, RunnerHealth, RunnerLogs, RunnerSummary
+    },
+    timestamp::format_unix_timestamp,
 };
 use auth::{discover, login, whoami};
 use clap::{Parser, Subcommand};
@@ -26,23 +32,39 @@ enum Commands {
     /// List all nodes in the system
     ListNodes,
     /// Get details of a specific node
-    GetNode { node_id: String },
+    GetNode {
+        node_id: String,
+    },
     /// List all runners a user has access to
     ListRunners,
     /// Get details of a specific runner
-    GetRunnerDetails { runner_id: String },
+    GetRunnerDetails {
+        runner_id: String,
+    },
     /// Control a runner by sending a command (e.g., start, stop, restart)
-    ControlRunner { runner_id: String, command: String },
+    ControlRunner {
+        runner_id: String,
+        command: String,
+    },
     /// Discover the current node execution duration
     Discover,
     /// Identify the current user
     WhoAmI,
     /// Authenticate with the server
-    Login { username: String, password: String },
+    Login {
+        email: String,
+        password: String,
+    },
     /// Get summarized historic usage for a runner instance
+    GetInstanceUsage {
+        instance_id: String,
+    },
+    /// Get summarized historic usage for a runner group
     GetRunnerUsage {
         runner_id: String,
-        instance_id: String,
+    },
+    CalculateBilling {
+        runner_id: String,
     },
 }
 
@@ -65,13 +87,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::ControlRunner { runner_id, command } => {
             control_runner(&runner_id, &command).await?
         }
-        Commands::Login { username, password } => login(username, password).await?,
+        Commands::Login { email, password } => login(email, password).await?,
         Commands::Discover => discover().await?,
         Commands::WhoAmI => whoami().await?,
-        Commands::GetRunnerUsage {
-            runner_id,
-            instance_id,
-        } => get_runner_usage(&runner_id, &instance_id).await?,
+        Commands::GetInstanceUsage { instance_id } => get_instance_usage(&instance_id).await?,
+        Commands::GetRunnerUsage { runner_id } => get_runner_usage(&runner_id).await?,
+        Commands::CalculateBilling { runner_id } => calculate_billing(&runner_id).await?,
     }
 
     Ok(())
@@ -157,25 +178,16 @@ async fn get_node(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn get_runner_usage(
-    runner_id: &str,
-    instance_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn get_instance_usage(instance_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let token = get_token().await?;
 
-    let url = format!(
-        "{}usage/single/{}/{}",
-        get_base_url(),
-        runner_id,
-        instance_id
-    );
+    let url = format!("{}usage/single/{}", get_base_url(), instance_id);
 
     let response = client.get(&url).bearer_auth(token).send().await?;
 
     if response.status().is_success() {
-        let api_response: ApiResponse<BilledUsageSummary> =
-            response.json().await?;
+        let api_response: ApiResponse<BilledUsageSummary> = response.json().await?;
 
         log!(LogLevel::Debug, "{:?}", api_response);
 
@@ -208,6 +220,114 @@ async fn get_runner_usage(
         log!(
             LogLevel::Error,
             "Failed to get usage: {}",
+            response.text().await?
+        );
+    }
+
+    Ok(())
+}
+
+async fn get_runner_usage(runner_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let token = get_token().await?;
+
+    let url = format!("{}usage/group/{}", get_base_url(), runner_id);
+
+    let response = client.get(&url).bearer_auth(token).send().await?;
+
+    if response.status().is_success() {
+        let api_response: ApiResponse<BilledUsageSummary> = response.json().await?;
+
+        log!(LogLevel::Debug, "{:?}", api_response);
+
+        if let Some(summary) = api_response.data {
+            log!(LogLevel::Info, "Runner ID: {}", summary.runner_id);
+            log!(LogLevel::Info, "Instance ID: {}", summary.instance_id);
+            log!(LogLevel::Info, "Total CPU Time: {:.2}", summary.total_cpu);
+            log!(LogLevel::Info, "Peak CPU: {:.2}%", summary.peak_cpu);
+            log!(LogLevel::Info, "Avg RAM: {:.2} MB", summary.avg_memory.round());
+            log!(LogLevel::Info, "Peak RAM: {:.2} MB", summary.peak_memory);
+            log!(
+                LogLevel::Info,
+                "Data In: {}",
+                format_bytes(summary.total_rx)
+            );
+            log!(
+                LogLevel::Info,
+                "Data Out: {}",
+                format_bytes(summary.total_tx)
+            );
+            log!(
+                LogLevel::Info,
+                "Samples Collected: {}",
+                summary.total_samples
+            );
+        } else {
+            log!(LogLevel::Warn, "No usage summary found.");
+        }
+    } else {
+        log!(
+            LogLevel::Error,
+            "Failed to get usage: {}",
+            response.text().await?
+        );
+    }
+
+    Ok(())
+}
+
+async fn calculate_billing(runner_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let token = get_token().await?;
+
+    let url = format!("{}usage/group/{}", get_base_url(), runner_id);
+    let response = client.get(&url).bearer_auth(token).send().await?;
+
+    if response.status().is_success() {
+        let api_response: ApiResponse<BilledUsageSummary> = response.json().await?;
+        if let Some(summary) = api_response.data {
+
+            log!(LogLevel::Debug, "{:?}", summary);
+
+            match client
+            .post(&format!("https://api.artisanhosting.net/v1/billing/calculate?instances={}", summary.instances))
+            .json(&summary)
+            .send()
+            .await {
+                Ok(response) => {
+
+                    let text = response.text().await?;
+                    // println!("Raw response body: {:?}", text);
+                    
+                    // Optional: try parsing only if it's not empty
+                    let api_response: ApiResponse<BillingCosts> = if !text.trim().is_empty() { 
+                        serde_json::from_str(&text)?
+                    } else {
+                        log!(LogLevel::Error, "Empty response body from server");
+                        std::process::exit(0)
+                    };
+
+                    match api_response.data {
+                        Some(data) => {
+                            log!(LogLevel::Info, "{}", data);
+                        },
+                        None => {
+                            log!(LogLevel::Error, "Invalid response recieved: {}:{:?}", api_response.status, api_response.errors);
+                            std::process::exit(0);
+                        },
+                    }
+
+                },
+                Err(err) => log!(LogLevel::Error, "Failed to get bill data: {}", err.to_string()),
+            }
+
+        } else {
+            log!(LogLevel::Warn, "The server didn't give us usage data.");
+        }
+    } else {
+        log!(
+            LogLevel::Error,
+            "Failed to fetch usage: {}",
             response.text().await?
         );
     }
@@ -371,6 +491,7 @@ async fn control_runner(runner_id: &str, command: &str) -> Result<(), Box<dyn st
 fn get_base_url() -> &'static str {
     "https://api.artisanhosting.net/v1/"
 }
+
 
 fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
