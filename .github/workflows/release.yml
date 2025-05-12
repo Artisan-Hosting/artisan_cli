@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'  # e.g. v1.0.0
+      - 'v*'
 
 jobs:
   build:
@@ -52,7 +52,6 @@ jobs:
   macos-universal:
     name: Build macOS Universal Binary
     runs-on: macos-latest
-    needs: build
 
     steps:
       - uses: actions/checkout@v3
