@@ -49,26 +49,27 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: |
-            x86_64-apple-darwin
-            aarch64-apple-darwin
-
-      - name: Build for x86_64
-        run: cargo build --release --target x86_64-apple-darwin
+      - name: Install Rust for aarch64 and x86_64
+        run: |
+          rustup install stable-aarch64-apple-darwin
+          rustup install stable-x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin --toolchain stable-aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin --toolchain stable-x86_64-apple-darwin
 
       - name: Build for aarch64
-        run: cargo build --release --target aarch64-apple-darwin
+        run: |
+          rustup run stable-aarch64-apple-darwin cargo build --release --target aarch64-apple-darwin
+
+      - name: Build for x86_64
+        run: |
+          rustup run stable-x86_64-apple-darwin cargo build --release --target x86_64-apple-darwin
 
       - name: Create Universal 2 Binary
         run: |
           mkdir -p dist
           lipo -create \
-            target/x86_64-apple-darwin/release/artisan_cli \
             target/aarch64-apple-darwin/release/artisan_cli \
+            target/x86_64-apple-darwin/release/artisan_cli \
             -output dist/artisan_cli-macos-universal
 
       - name: Upload Artifact
@@ -76,6 +77,7 @@ jobs:
         with:
           name: binaries
           path: dist/*
+
 
   package:
     name: Package All Binaries
@@ -100,3 +102,4 @@ jobs:
           files: artisan_cli-all-platforms.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+ 
