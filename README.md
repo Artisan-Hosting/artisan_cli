@@ -1,7 +1,3 @@
-Here is your updated, polished `README.md` for the Artisan CLI — with accurate commands, platform notes, and custom license reference:
-
----
-
 ````markdown
 # 🛠️ Artisan CLI
 
@@ -25,7 +21,7 @@ Artisan CLI is a powerful developer tool to interact with the [Artisan Hosting](
 Clone and build the CLI using Cargo:
 
 ```bash
-git clone https://github.com/yourusername/artisan_cli.git
+git clone https://github.com/Artisan-Hosting/artisan_cli.git
 cd artisan_cli
 cargo build --release
 ````
@@ -128,5 +124,3 @@ This project is licensed under the [AHSLv1](./License), a custom license develop
 ## 📬 Contact
 
 Questions? Email: [dwhitfield@artisanhosting.net](mailto:dwhitfield@artisanhosting.net)
-
-```
