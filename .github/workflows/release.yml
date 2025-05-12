@@ -14,8 +14,10 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            ext: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            ext: ".exe"
 
     steps:
       - uses: actions/checkout@v3
@@ -29,25 +31,16 @@ jobs:
       - name: Build binary
         run: cargo build --release --target=${{ matrix.target }}
 
-      - name: Archive binary
+      - name: Rename and copy binary
         run: |
-          mkdir dist
-          cp target/${{ matrix.target }}/release/artisan_cli* dist/
-          cd dist
-          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            7z a ../artisan_cli-${{ matrix.target }}.zip artisan_cli.exe
-          else
-            tar -czf ../artisan_cli-${{ matrix.target }}.tar.gz artisan_cli
-          fi
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/artisan_cli${{ matrix.ext }} dist/artisan_cli-${{ matrix.target }}${{ matrix.ext }}
 
-      - name: Upload release asset
-        uses: softprops/action-gh-release@v1
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: |
-            artisan_cli-*.zip
-            artisan_cli-*.tar.gz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: binaries
+          path: dist/*
 
   macos-universal:
     name: Build macOS Universal Binary
@@ -76,12 +69,34 @@ jobs:
           lipo -create \
             target/x86_64-apple-darwin/release/artisan_cli \
             target/aarch64-apple-darwin/release/artisan_cli \
-            -output dist/artisan_cli
-          tar -czf artisan_cli-macos-universal.tar.gz -C dist artisan_cli
+            -output dist/artisan_cli-macos-universal
 
-      - name: Upload Universal macOS Release
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: dist/*
+
+  package:
+    name: Package All Binaries
+    runs-on: ubuntu-latest
+    needs: [build, macos-universal]
+
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: release_binaries
+
+      - name: Create final zip
+        run: |
+          cd release_binaries
+          zip ../artisan_cli-all-platforms.zip *
+
+      - name: Upload Final Release Asset
         uses: softprops/action-gh-release@v1
         with:
-          files: artisan_cli-macos-universal.tar.gz
+          files: artisan_cli-all-platforms.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
