@@ -42,7 +42,7 @@ jobs:
           name: binaries
           path: dist/*
 
-   macos-aarch64:
+  macos-aarch64:
     name: Build macOS aarch64
     runs-on: macos-latest
     steps:
