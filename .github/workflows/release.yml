@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -22,8 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
+      - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: ${{ matrix.target }}
@@ -31,19 +31,17 @@ jobs:
       - name: Build binary
         run: cargo build --release --target=${{ matrix.target }}
 
-      - name: Rename and copy binary
+      - name: Prepare binary
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/artisan_cli${{ matrix.ext }} dist/artisan_cli-${{ matrix.target }}${{ matrix.ext }}
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: artisan_cli-${{ matrix.target }}
           path: dist/*
 
   macos-aarch64:
-    name: Build macOS aarch64
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
@@ -51,15 +49,13 @@ jobs:
         with:
           toolchain: stable
           target: aarch64-apple-darwin
-      - name: Build aarch64
-        run: cargo build --release --target aarch64-apple-darwin
+      - run: cargo build --release --target aarch64-apple-darwin
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-aarch64
+          name: artisan_cli-aarch64-apple-darwin
           path: target/aarch64-apple-darwin/release/artisan_cli
 
   macos-x86_64:
-    name: Build macOS x86_64
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v3
@@ -67,27 +63,24 @@ jobs:
         with:
           toolchain: stable
           target: x86_64-apple-darwin
-      - name: Build x86_64
-        run: cargo build --release --target x86_64-apple-darwin
+      - run: cargo build --release --target x86_64-apple-darwin
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-x86_64
+          name: artisan_cli-x86_64-apple-darwin
           path: target/x86_64-apple-darwin/release/artisan_cli
 
   macos-universal:
-    name: Combine macOS Universal Binary
-    runs-on: macos-latest
     needs: [macos-aarch64, macos-x86_64]
+    runs-on: macos-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: macos-aarch64
+          name: artisan_cli-aarch64-apple-darwin
           path: bin/aarch64
       - uses: actions/download-artifact@v4
         with:
-          name: macos-x86_64
+          name: artisan_cli-x86_64-apple-darwin
           path: bin/x86_64
-
       - name: Create Universal Binary
         run: |
           mkdir -p dist
@@ -95,35 +88,72 @@ jobs:
             bin/aarch64/artisan_cli \
             bin/x86_64/artisan_cli \
             -output dist/artisan_cli-macos-universal
-          tar -czf artisan_cli-macos-universal.tar.gz -C dist artisan_cli-macos-universal
-
       - uses: actions/upload-artifact@v4
         with:
-          name: binaries
-          path: artisan_cli-macos-universal.tar.gz
-
+          name: artisan_cli-macos-universal
+          path: dist/artisan_cli-macos-universal
 
   package:
-    name: Package All Binaries
-    runs-on: ubuntu-latest
     needs: [build, macos-universal]
-
+    runs-on: ubuntu-latest
     steps:
       - name: Download all binaries
         uses: actions/download-artifact@v4
         with:
-          name: binaries
-          path: release_binaries
+          path: binaries
 
-      - name: Create final zip
+      - name: Rename and organize
         run: |
-          cd release_binaries
+          mkdir final
+          find binaries -type f -exec cp {} final/ \;
+          cd final
+          mv artisan_cli-*linux* artisan_cli-linux
+          mv artisan_cli-*windows* artisan_cli-windows.exe
+          mv artisan_cli-macos-universal artisan_cli-macos
+
+      - name: Create Zip
+        run: |
+          cd final
           zip ../artisan_cli-all-platforms.zip *
 
-      - name: Upload Final Release Asset
+      - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
         with:
           files: artisan_cli-all-platforms.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
- 
+
+  docs:
+    name: Build and Deploy Docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Generate Docs
+        run: cargo doc --no-deps --release
+
+      - name: Upload Docs to Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+
+  deploy-pages:
+    name: Deploy GitHub Pages
+    needs: docs
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
