@@ -1,11 +1,12 @@
 [package]
 name = "artisan_cli"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 [dependencies]
 #artisan_middleware = "5.1.2"
-artisan_middleware = { git = "https://github.com/Artisan-Hosting/artisan_lib.git" }
+#artisan_middleware = { git = "https://github.com/Artisan-Hosting/artisan_lib.git" }
+#artisan_middleware = {path = "/root/artisan_lib"}
 reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -20,3 +21,8 @@ regex = "1.11.1"
 unicode-width = "0.2.0"
 crossterm = "0.27"
 ratatui = { version = "0.26", features = ["crossterm"] }
+
+[dependencies.artisan_middleware]
+path = "/root/artisan_lib"
+default-features = false
+features = ["cli"]

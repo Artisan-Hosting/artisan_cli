@@ -2,7 +2,7 @@ use std::fs::create_dir_all;
 use std::{env, fs};
 
 use artisan_middleware::dusa_collection_utils::log;
-use artisan_middleware::dusa_collection_utils::logger::LogLevel;
+use artisan_middleware::dusa_collection_utils::core::logger::LogLevel;
 use artisan_middleware::encryption::{simple_decrypt, simple_encrypt};
 use artisan_middleware::timestamp::current_timestamp;
 use reqwest::Client;

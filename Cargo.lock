@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "artisan_cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "artisan_middleware",
  "base64 0.13.1",
@@ -192,15 +192,15 @@ dependencies = [
 [[package]]
 name = "artisan_middleware"
 version = "5.4.0"
-source = "git+https://github.com/Artisan-Hosting/artisan_lib.git#56ae0be795c1407f87da74638ff956a5a2c56864"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
+ "bytes 1.10.1",
  "chrono",
  "colored",
  "colorized",
  "config",
- "dusa_collection_utils 3.2.3",
+ "dusa_collection_utils 4.0.0",
  "gethostname",
  "hex",
  "lazy_static",
@@ -780,6 +780,33 @@ name = "dusa_collection_utils"
 version = "3.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e15bf96435d619892b58be80ae13e2efcfcc844a77d4ffbfd84fda910872fca1"
+dependencies = [
+ "block-modes",
+ "cfg_rust_features",
+ "colored",
+ "flate2",
+ "hex",
+ "lazy_static",
+ "nix 0.20.2",
+ "rand",
+ "regex",
+ "reqwest 0.12.15",
+ "rustversion",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tar",
+ "tempfile",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
+name = "dusa_collection_utils"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf35a5d5ea2194eac88409e43b007b3a5d2d97ef5154dcfc29b3044b5d75cc1c"
 dependencies = [
  "block-modes",
  "cfg_rust_features",
@@ -2318,14 +2345,14 @@ dependencies = [
 
 [[package]]
 name = "recs_lib"
-version = "3.1.3"
+version = "3.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b08966c3af0eaea8c5b309448b96cb6f89c832fc8f0c6303cb1ca48e8f6eaab"
+checksum = "7d97523e90c9b71d060fd27f5f8bc2386ebe07a47fc98a98776d95b1eed71c59"
 dependencies = [
  "aes 0.7.5",
  "base64 0.21.7",
  "block-modes",
- "dusa_collection_utils 3.2.3",
+ "dusa_collection_utils 4.0.0",
  "glob",
  "hex",
  "hmac",

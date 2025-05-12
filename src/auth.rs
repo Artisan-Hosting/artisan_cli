@@ -6,7 +6,7 @@ use crate::{
 };
 use artisan_middleware::{
     api::roles::Role,
-    dusa_collection_utils::{log, logger::LogLevel},
+    dusa_collection_utils::{log, core::logger::LogLevel},
 };
 use owo_colors::OwoColorize;
 use reqwest::Client;
