@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # e.g. v1.0.0
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build binary
+        run: cargo build --release
+
+      - name: Archive binary
+        run: |
+          mkdir dist
+          cp target/release/artisan_cli dist/
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a ../artisan_cli-${{ runner.os }}.zip artisan_cli.exe
+          else
+            tar -czf ../artisan_cli-${{ runner.os }}.tar.gz artisan_cli
+          fi
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artisan_cli-*.zip
+            artisan_cli-*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
