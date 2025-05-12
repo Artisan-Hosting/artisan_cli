@@ -42,41 +42,65 @@ jobs:
           name: binaries
           path: dist/*
 
-  macos-universal:
-    name: Build macOS Universal Binary
+   macos-aarch64:
+    name: Build macOS aarch64
     runs-on: macos-latest
-
     steps:
       - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: aarch64-apple-darwin
+      - name: Build aarch64
+        run: cargo build --release --target aarch64-apple-darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-aarch64
+          path: target/aarch64-apple-darwin/release/artisan_cli
 
-      - name: Install Rust for aarch64 and x86_64
-        run: |
-          rustup install stable-aarch64-apple-darwin
-          rustup install stable-x86_64-apple-darwin
-          rustup target add aarch64-apple-darwin --toolchain stable-aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin --toolchain stable-x86_64-apple-darwin
+  macos-x86_64:
+    name: Build macOS x86_64
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-apple-darwin
+      - name: Build x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-x86_64
+          path: target/x86_64-apple-darwin/release/artisan_cli
 
-      - name: Build for aarch64
-        run: |
-          rustup run stable-aarch64-apple-darwin cargo build --release --target aarch64-apple-darwin
+  macos-universal:
+    name: Combine macOS Universal Binary
+    runs-on: macos-latest
+    needs: [macos-aarch64, macos-x86_64]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-aarch64
+          path: bin/aarch64
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-x86_64
+          path: bin/x86_64
 
-      - name: Build for x86_64
-        run: |
-          rustup run stable-x86_64-apple-darwin cargo build --release --target x86_64-apple-darwin
-
-      - name: Create Universal 2 Binary
+      - name: Create Universal Binary
         run: |
           mkdir -p dist
           lipo -create \
-            target/aarch64-apple-darwin/release/artisan_cli \
-            target/x86_64-apple-darwin/release/artisan_cli \
+            bin/aarch64/artisan_cli \
+            bin/x86_64/artisan_cli \
             -output dist/artisan_cli-macos-universal
+          tar -czf artisan_cli-macos-universal.tar.gz -C dist artisan_cli-macos-universal
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: binaries
-          path: dist/*
+          path: artisan_cli-macos-universal.tar.gz
 
 
   package:
