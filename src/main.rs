@@ -1,98 +1,123 @@
-use std::fs::create_dir_all;
+use std::{fs::create_dir_all, time::Duration};
 
 use artisan_middleware::{
-    aggregator::{BilledUsageSummary, BillingCosts},
-    dusa_collection_utils::{
+    aggregator::{BilledUsageSummary, BillingCosts}, cli::clean_screen, dusa_collection_utils::{
         functions::current_timestamp,
         log,
         logger::{set_log_level, LogLevel},
-    },
-    portal::{
-        ApiResponse, CommandResponse, NodeDetails, NodeInfo, RunnerDetails, RunnerHealth, RunnerLogs, RunnerSummary
-    },
-    timestamp::format_unix_timestamp,
+    }, portal::{
+        ApiResponse, CommandResponse, InstanceLogResponse, NodeDetails, NodeInfo, RunnerDetails,
+        RunnerHealth, RunnerSummary,
+    }, timestamp::format_unix_timestamp
 };
 use auth::{discover, login, whoami};
-use clap::{Parser, Subcommand};
+use clap::Parser;
+use cli::{AuthCmd, Cli, InstanceCmd, NodeCmd, RunnerCmd, TopLevelCommand};
+use defs::{BillingEntry, NodeRow, NodeSummaryRow, RunnerInstanceRow, RunnerRow, UsageRow};
 use file::get_token;
+use formatting::{display_table, format_bytes, print_logs, strip_ansi_codes, style_table};
+use owo_colors::OwoColorize;
 use reqwest::Client;
+use tabled::Table;
+use tokio::time::sleep;
 
 mod auth;
+mod cli;
+mod defs;
 mod file;
-
-#[derive(Parser)]
-#[clap(name = "artisan_cli", version = "1.0", author = "Artisan Hosting")]
-struct Cli {
-    #[clap(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// List all nodes in the system
-    ListNodes,
-    /// Get details of a specific node
-    GetNode {
-        node_id: String,
-    },
-    /// List all runners a user has access to
-    ListRunners,
-    /// Get details of a specific runner
-    GetRunnerDetails {
-        runner_id: String,
-    },
-    /// Control a runner by sending a command (e.g., start, stop, restart)
-    ControlRunner {
-        runner_id: String,
-        command: String,
-    },
-    /// Discover the current node execution duration
-    Discover,
-    /// Identify the current user
-    WhoAmI,
-    /// Authenticate with the server
-    Login {
-        email: String,
-        password: String,
-    },
-    /// Get summarized historic usage for a runner instance
-    GetInstanceUsage {
-        instance_id: String,
-    },
-    /// Get summarized historic usage for a runner group
-    GetRunnerUsage {
-        runner_id: String,
-    },
-    CalculateBilling {
-        runner_id: String,
-    },
-}
+mod formatting;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     set_log_level(LogLevel::Debug);
     let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
-    create_dir_all(&home_dir.join(".artisan_cli"))?;
-    let env_file = home_dir.join(".artisan_cli/.env");
+    let our_dir = home_dir.join(".artisan_cli");
+    let env_file = our_dir.join(".env");
 
+    create_dir_all(&our_dir)?;
     dotenv::from_path(env_file).ok();
 
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::ListNodes => list_nodes().await?,
-        Commands::GetNode { node_id } => get_node(&node_id).await?,
-        Commands::ListRunners => list_runners().await?,
-        Commands::GetRunnerDetails { runner_id } => get_runner_details(&runner_id).await?,
-        Commands::ControlRunner { runner_id, command } => {
-            control_runner(&runner_id, &command).await?
+    loop {
+        match cli.command {
+            TopLevelCommand::Node(ref node_cmd) => match node_cmd {
+                NodeCmd::List => list_nodes().await?,
+                NodeCmd::Get { node_id } => get_node(&node_id).await?,
+            },
+            TopLevelCommand::Runner(ref runner_cmd) => match runner_cmd {
+                RunnerCmd::List => list_runners().await?,
+                RunnerCmd::Details { runner_id } => get_runner_details(&runner_id).await?,
+                RunnerCmd::Usage { runner_id } => get_runner_usage(&runner_id).await?,
+                RunnerCmd::Control { runner_id, command } => {
+                    control_runner(&runner_id, &command).await?
+                }
+                RunnerCmd::Bill { runner_id } => calculate_billing(&runner_id).await?,
+            },
+            TopLevelCommand::Instance(ref instance_cmd) => match instance_cmd {
+                InstanceCmd::Usage { instance_id } => get_instance_usage(&instance_id).await?,
+            },
+            TopLevelCommand::Auth(ref auth_cmd) => match auth_cmd {
+                AuthCmd::Whoami => whoami().await?,
+                AuthCmd::Discover => discover().await?,
+                AuthCmd::Login { email, password } => login(email, password).await?,
+            },
+            TopLevelCommand::Logs { ref instance_id, lines } => show_logs(lines, &instance_id).await?,
         }
-        Commands::Login { email, password } => login(email, password).await?,
-        Commands::Discover => discover().await?,
-        Commands::WhoAmI => whoami().await?,
-        Commands::GetInstanceUsage { instance_id } => get_instance_usage(&instance_id).await?,
-        Commands::GetRunnerUsage { runner_id } => get_runner_usage(&runner_id).await?,
-        Commands::CalculateBilling { runner_id } => calculate_billing(&runner_id).await?,
+
+        // Only loop if --watch is set
+        if let Some(interval) = cli.watch {
+            if interval < 30 {
+                println!("Woah woah woah, we're fast but we're not that fast!");
+                break;
+            }
+            sleep(Duration::from_millis(interval)).await;
+            clean_screen();
+        } else {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+async fn show_logs(lines: u64, instance_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let token = get_token().await?;
+
+    let mut line_array = Vec::new();
+
+    let response = client
+        .get(&format!("{}logs/{}/{}", get_base_url(), instance_id, lines))
+        .bearer_auth(token)
+        .send()
+        .await?;
+
+    if response.status().is_success() {
+        let api_response: ApiResponse<InstanceLogResponse> = response.json().await?;
+        if let Some(log_data) = api_response.data {
+            let sorted = log_data.lines;
+            let mut e = 1;
+
+            log!(LogLevel::Info, "Runner: {}", log_data.runner_id);
+            log!(LogLevel::Info, "Instance: {}", log_data.instance_id);
+            sorted.iter().for_each(|entry| {
+                let line = format!(
+                    "[{:03} of {:03}] @ {} -> {}",
+                    e, lines, entry.timestamp, entry.message
+                );
+                line_array.push(line);
+                e += 1;
+            });
+
+            print_logs(line_array, format!("{} Logs ('q' to quit)", instance_id))?;
+        }
+    } else {
+        log!(
+            LogLevel::Error,
+            "Failed to list logs: {}",
+            response.text().await?
+        );
     }
 
     Ok(())
@@ -111,17 +136,22 @@ async fn list_nodes() -> Result<(), Box<dyn std::error::Error>> {
     if response.status().is_success() {
         let api_response: ApiResponse<Vec<NodeInfo>> = response.json().await?;
         if let Some(nodes) = api_response.data {
-            for node in nodes {
-                let data = format!(
-                    "Node Id: {}, Node Status: {}, Node Ip: {}, Runners in config: {}, Last Updated: {}",
-                    node.identity.id,
-                    node.status,
-                    node.ip_address,
-                    node.runners.len(),
-                    node.last_updated,
-                );
-                log!(LogLevel::Info, "{}", data);
-            }
+            println!();
+
+            let rows = nodes
+                .into_iter()
+                .map(|node| NodeRow {
+                    id: node.identity.id.to_string(),
+                    status: strip_ansi_codes(&node.status.to_string()),
+                    ip: node.ip_address.to_string(),
+                    runner_count: node.runners.len().to_string(),
+                    updated: node.last_updated.to_string(),
+                })
+                .collect::<Vec<_>>();
+
+            let mut table = Table::new(rows);
+            table = style_table(&mut table, Some(2), true);
+            display_table(&table);
         } else {
             log!(
                 LogLevel::Error,
@@ -152,18 +182,20 @@ async fn get_node(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     if response.status().is_success() {
         let api_response: ApiResponse<NodeDetails> = response.json().await?;
         if let Some(node) = api_response.data {
-            let data = format!(
-                "Node Id: {}, Node Status: {}, Client Apps: {}, System Apps: {}, Hostname: {}, Ip Addr: {}, Runner Errors: {}, Last Updated @ {}",
-                node.identity.id,
-                node.status,
-                node.manager_data.client_apps,
-                node.manager_data.system_apps,
-                node.manager_data.hostname,
-                node.manager_data.address,
-                node.manager_data.warning,
-                node.last_updated
-            );
-            log!(LogLevel::Info, "{}", data);
+            let row = NodeSummaryRow {
+                node_id: node.identity.id.to_string(),
+                status: strip_ansi_codes(&node.status.to_string()),
+                client_apps: node.manager_data.client_apps,
+                system_apps: node.manager_data.system_apps,
+                hostname: node.manager_data.hostname.to_string(),
+                ip_address: node.manager_data.address.to_string(),
+                warnings: node.manager_data.warning,
+                last_updated: node.last_updated.to_string(),
+            };
+
+            let mut table = Table::new(vec![row]);
+            table = style_table(&mut table, Some(1), true); // Color status column, center align
+            display_table(&table);
         } else {
             log!(LogLevel::Info, "Node not found.");
         }
@@ -189,30 +221,24 @@ async fn get_instance_usage(instance_id: &str) -> Result<(), Box<dyn std::error:
     if response.status().is_success() {
         let api_response: ApiResponse<BilledUsageSummary> = response.json().await?;
 
-        log!(LogLevel::Debug, "{:?}", api_response);
+        // log!(LogLevel::Debug, "{:?}", api_response);
 
         if let Some(summary) = api_response.data {
-            log!(LogLevel::Info, "Runner ID: {}", summary.runner_id);
-            log!(LogLevel::Info, "Instance ID: {}", summary.instance_id);
-            log!(LogLevel::Info, "Total CPU: {:.2}%", summary.total_cpu);
-            log!(LogLevel::Info, "Peak CPU: {:.2}%", summary.peak_cpu);
-            log!(LogLevel::Info, "Avg RAM: {:.2} MB", summary.avg_memory);
-            log!(LogLevel::Info, "Peak RAM: {:.2} MB", summary.peak_memory);
-            log!(
-                LogLevel::Info,
-                "Data In: {}",
-                format_bytes(summary.total_rx)
-            );
-            log!(
-                LogLevel::Info,
-                "Data Out: {}",
-                format_bytes(summary.total_tx)
-            );
-            log!(
-                LogLevel::Info,
-                "Samples Collected: {}",
-                summary.total_samples
-            );
+            let row = UsageRow {
+                runner_id: summary.runner_id.to_string(),
+                instance_id: summary.instance_id.to_string(),
+                total_cpu: format!("{:.2}", summary.total_cpu),
+                peak_cpu: format!("{:.2}%", summary.peak_cpu),
+                avg_ram: format!("{:.2} MB", summary.avg_memory),
+                peak_ram: format!("{:.2} MB", summary.peak_memory),
+                rx: format_bytes(summary.total_rx),
+                tx: format_bytes(summary.total_tx),
+                samples: summary.total_samples.to_string(),
+            };
+
+            let mut table = Table::new(vec![row]);
+            table = style_table(&mut table, Some(1), true);
+            display_table(&table);
         } else {
             log!(LogLevel::Warn, "No usage summary found.");
         }
@@ -238,30 +264,24 @@ async fn get_runner_usage(runner_id: &str) -> Result<(), Box<dyn std::error::Err
     if response.status().is_success() {
         let api_response: ApiResponse<BilledUsageSummary> = response.json().await?;
 
-        log!(LogLevel::Debug, "{:?}", api_response);
+        // log!(LogLevel::Debug, "{:?}", api_response);
 
         if let Some(summary) = api_response.data {
-            log!(LogLevel::Info, "Runner ID: {}", summary.runner_id);
-            log!(LogLevel::Info, "Instance ID: {}", summary.instance_id);
-            log!(LogLevel::Info, "Total CPU Time: {:.2}", summary.total_cpu);
-            log!(LogLevel::Info, "Peak CPU: {:.2}%", summary.peak_cpu);
-            log!(LogLevel::Info, "Avg RAM: {:.2} MB", summary.avg_memory.round());
-            log!(LogLevel::Info, "Peak RAM: {:.2} MB", summary.peak_memory);
-            log!(
-                LogLevel::Info,
-                "Data In: {}",
-                format_bytes(summary.total_rx)
-            );
-            log!(
-                LogLevel::Info,
-                "Data Out: {}",
-                format_bytes(summary.total_tx)
-            );
-            log!(
-                LogLevel::Info,
-                "Samples Collected: {}",
-                summary.total_samples
-            );
+            let row = UsageRow {
+                runner_id: summary.runner_id.to_string(),
+                instance_id: summary.instance_id.to_string(),
+                total_cpu: format!("{:.2}", summary.total_cpu),
+                peak_cpu: format!("{:.2}%", summary.peak_cpu),
+                avg_ram: format!("{:.2} MB", summary.avg_memory),
+                peak_ram: format!("{:.2} MB", summary.peak_memory),
+                rx: format_bytes(summary.total_rx),
+                tx: format_bytes(summary.total_tx),
+                samples: summary.total_samples.to_string(),
+            };
+
+            let mut table = Table::new(vec![row]);
+            table = style_table(&mut table, Some(1), true);
+            display_table(&table);
         } else {
             log!(LogLevel::Warn, "No usage summary found.");
         }
@@ -286,21 +306,24 @@ async fn calculate_billing(runner_id: &str) -> Result<(), Box<dyn std::error::Er
     if response.status().is_success() {
         let api_response: ApiResponse<BilledUsageSummary> = response.json().await?;
         if let Some(summary) = api_response.data {
-
             log!(LogLevel::Debug, "{:?}", summary);
 
             match client
-            .post(&format!("https://api.artisanhosting.net/v1/billing/calculate?instances={}", summary.instances))
-            .json(&summary)
-            .send()
-            .await {
+                .post(&format!(
+                    "{}billing/calculate?instances={}",
+                    get_base_url(),
+                    summary.instances
+                ))
+                .json(&summary)
+                .send()
+                .await
+            {
                 Ok(response) => {
-
                     let text = response.text().await?;
                     // println!("Raw response body: {:?}", text);
-                    
+
                     // Optional: try parsing only if it's not empty
-                    let api_response: ApiResponse<BillingCosts> = if !text.trim().is_empty() { 
+                    let api_response: ApiResponse<BillingCosts> = if !text.trim().is_empty() {
                         serde_json::from_str(&text)?
                     } else {
                         log!(LogLevel::Error, "Empty response body from server");
@@ -309,18 +332,48 @@ async fn calculate_billing(runner_id: &str) -> Result<(), Box<dyn std::error::Er
 
                     match api_response.data {
                         Some(data) => {
-                            log!(LogLevel::Info, "{}", data);
-                        },
+                            let rows = vec![
+                                BillingEntry {
+                                    label: "RAM Usage".to_string(),
+                                    value: format!("${:.2}", data.ram_cost),
+                                },
+                                BillingEntry {
+                                    label: "CPU Usage".to_string(),
+                                    value: format!("${:.2}", data.cpu_cost),
+                                },
+                                BillingEntry {
+                                    label: "Bandwidth".to_string(),
+                                    value: format!("${:.2}", data.bandwidth_cost),
+                                },
+                                BillingEntry {
+                                    label: "Base Hosting".to_string(),
+                                    value: format!("${:.2}", (data.instances * 5)),
+                                },
+                                // BillingEntry { label: "Total".to_string(), value: format!("{}", format!("${:.2}", data.total_cost).bold().green()) },
+                            ];
+
+                            let mut table = Table::new(rows);
+                            table = style_table(&mut table, None, true);
+                            display_table(&table);
+                            log!(LogLevel::Info, "Total: ${:.2}", data.total_cost);
+                        }
                         None => {
-                            log!(LogLevel::Error, "Invalid response recieved: {}:{:?}", api_response.status, api_response.errors);
+                            log!(
+                                LogLevel::Error,
+                                "Invalid response recieved: {}:{:?}",
+                                api_response.status,
+                                api_response.errors
+                            );
                             std::process::exit(0);
-                        },
+                        }
                     }
-
-                },
-                Err(err) => log!(LogLevel::Error, "Failed to get bill data: {}", err.to_string()),
+                }
+                Err(err) => log!(
+                    LogLevel::Error,
+                    "Failed to get bill data: {}",
+                    err.to_string()
+                ),
             }
-
         } else {
             log!(LogLevel::Warn, "The server didn't give us usage data.");
         }
@@ -348,15 +401,22 @@ async fn list_runners() -> Result<(), Box<dyn std::error::Error>> {
     if response.status().is_success() {
         let api_response: ApiResponse<Vec<RunnerSummary>> = response.json().await?;
         if let Some(runners) = api_response.data {
-            for runner in runners {
-                let data: String = format!(
-                    "Name: {}, Status: {}, Uptime: {}, Instances: {}",
-                    runner.name.replace("ais_", ""),
-                    runner.status,
-                    runner.uptime.unwrap_or(0),
-                    runner.nodes.len()
-                );
-                log!(LogLevel::Info, "{}", data);
+            if runners.is_empty() {
+                println!("{}", "No runners found.".yellow());
+            } else {
+                let rows = runners
+                    .into_iter()
+                    .map(|r| RunnerRow {
+                        name: strip_ansi_codes(r.name.replace("ais_", "").trim_ascii()),
+                        status: strip_ansi_codes(r.status.to_string().trim_ascii()),
+                        uptime: strip_ansi_codes(r.uptime.unwrap_or(0).to_string().trim_ascii()),
+                        instances: strip_ansi_codes(r.nodes.len().to_string().trim_ascii()),
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut table = Table::new(rows);
+                table = style_table(&mut table, Some(1), true);
+                display_table(&table);
             }
         } else {
             log!(LogLevel::Error, "No runners found");
@@ -385,40 +445,38 @@ async fn get_runner_details(runner_id: &str) -> Result<(), Box<dyn std::error::E
     if response.status().is_success() {
         let api_response: ApiResponse<Vec<RunnerDetails>> = response.json().await?;
         if let Some(runners) = api_response.data {
-            log!(LogLevel::Info, "Information on {} runner group", runner_id);
-            for runner in runners {
-                let health_data = if let Some(health) = runner.health {
-                    health
-                } else {
-                    RunnerHealth {
+            // log!(LogLevel::Info, "Information on {} runner group", runner_id);
+
+            let rows = runners
+                .into_iter()
+                .map(|runner| {
+                    let health = runner.health.unwrap_or_else(|| RunnerHealth {
                         uptime: 0,
                         last_check: current_timestamp(),
                         cpu_usage: "-".into(),
                         ram_usage: "-".into(),
                         tx_bytes: 0,
                         rx_bytes: 0,
+                    });
+
+                    let log_len = runner.logs.as_ref().map_or(0, |logs| logs.recent.len());
+
+                    RunnerInstanceRow {
+                        id: runner.id.to_string(),
+                        status: strip_ansi_codes(&runner.status.to_string()),
+                        uptime: health.uptime.to_string(),
+                        cpu: health.cpu_usage.to_string(),
+                        ram: health.ram_usage.to_string(),
+                        rx: format_bytes(health.rx_bytes),
+                        tx: format_bytes(health.tx_bytes),
+                        log_len: log_len.to_string(),
                     }
-                };
+                })
+                .collect::<Vec<_>>();
 
-                let log_data = if let Some(log) = runner.logs {
-                    log
-                } else {
-                    RunnerLogs { recent: Vec::new() }
-                };
-
-                let data = format!(
-                    "Instance Id: {}, Status: {}, Uptime: {}, Cpu Usage: {}, Ram Usage: {}, Data In: {}, Data Out: {}, Log Legnth: {}",
-                    runner.id,
-                    runner.status,
-                    health_data.uptime,
-                    health_data.cpu_usage,
-                    health_data.ram_usage,
-                    format_bytes(health_data.rx_bytes),
-                    format_bytes(health_data.tx_bytes),
-                    log_data.recent.len(),
-                );
-                log!(LogLevel::Info, "{}", data);
-            }
+            let mut table = Table::new(rows);
+            table = style_table(&mut table, Some(1), false);
+            display_table(&table);
         } else {
             log!(LogLevel::Error, "Runner not found.");
         }
@@ -490,26 +548,4 @@ async fn control_runner(runner_id: &str, command: &str) -> Result<(), Box<dyn st
 
 fn get_base_url() -> &'static str {
     "https://api.artisanhosting.net/v1/"
-}
-
-
-fn format_bytes(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-    const TB: f64 = GB * 1024.0;
-
-    let bytes_f64 = bytes as f64;
-
-    if bytes_f64 >= TB {
-        format!("{:.2} TB", bytes_f64 / TB)
-    } else if bytes_f64 >= GB {
-        format!("{:.2} GB", bytes_f64 / GB)
-    } else if bytes_f64 >= MB {
-        format!("{:.2} MB", bytes_f64 / MB)
-    } else if bytes_f64 >= KB {
-        format!("{:.2} KB", bytes_f64 / KB)
-    } else {
-        format!("{} B", bytes)
-    }
 }

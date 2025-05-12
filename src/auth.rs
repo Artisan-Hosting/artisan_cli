@@ -1,7 +1,14 @@
 use std::env;
 
-use crate::{file::{get_token, save_credentials, update_env_file}, get_base_url};
-use artisan_middleware::{api::roles::Role, dusa_collection_utils::{log, logger::LogLevel}};
+use crate::{
+    file::{get_token, save_credentials, update_env_file},
+    get_base_url,
+};
+use artisan_middleware::{
+    api::roles::Role,
+    dusa_collection_utils::{log, logger::LogLevel},
+};
+use owo_colors::OwoColorize;
 use reqwest::Client;
 
 pub async fn discover() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,37 +38,30 @@ pub async fn whoami() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let token = get_token().await?;
 
+    // First: get user_id
     let response_me = client
         .get(&format!("{}account/me", get_base_url()))
         .bearer_auth(token.clone())
         .send()
         .await?;
 
-    
     let username = {
         if response_me.status().is_success() {
             let json: serde_json::Value = response_me.json().await?;
-            if let Some(data) = json.get("user_id") {
-                match data.as_str() {
-                    Some(name) => name.to_string(),
-                    None => {
-                        // log!(LogLevel::Warn, "{:?}", response_me.text().await);
-                        String::from("Unknown: failed to parse")
-                    },
-                }
-            } else {
-                // log!(LogLevel::Warn, "{:?}", response_me.text().await);
-                String::from("Unknown: No userid")
-            }
+            json.get("user_id")
+                .and_then(|id| id.as_str())
+                .unwrap_or("Unknown")
+                .to_string()
         } else {
-            log!(LogLevel::Warn, "{:?}", response_me.text().await);
+            log!(LogLevel::Warn, "{}", "Failed to get user ID".yellow());
             String::from("Unknown")
         }
     };
 
+    // Then: get role and expiration
     let response = client
         .post(&format!("{}whoami", get_base_url()))
-        .bearer_auth(token.clone())
+        .bearer_auth(token)
         .send()
         .await?;
 
@@ -71,26 +71,49 @@ pub async fn whoami() -> Result<(), Box<dyn std::error::Error>> {
             let role = Role::from_str(data.get("roles").and_then(|v| v.as_str()).unwrap_or("none"));
             let expires = data.get("expires").and_then(|v| v.as_u64()).unwrap_or(0);
 
-            if role == Role::Super {
-                log!(LogLevel::Info, "Greetings: {}! For your security your sessions are only valid for 10 mins at a time. Good Luck", username);
-            } else if role == Role::None {
-                log!(LogLevel::Info, "YOU HAVE NO POWER HERE. Seriously tho.. you have an assigned role of: {}. You should talk to someone about that", role.to_str());
-            } else {
-                log!(LogLevel::Info, "Hi {}! for security your default role is: \"{}\" unless specified by a runner_group. Your token expires in: {} seconds", username, role.to_str(), expires);
+            match role {
+                Role::Super => {
+                    let msg = format!(
+                        "Greetings, {}! 🧙 Your role is {}. Your session is valid for 10 minutes.",
+                        username.bold(),
+                        role.to_str().bright_magenta()
+                    );
+                    log!(LogLevel::Info, "{}", msg);
+                }
+                Role::None => {
+                    let msg = format!(
+                        "YOU HAVE NO POWER HERE. 🧙 You are currently assigned: {}",
+                        role.to_str().yellow().bold()
+                    );
+                    log!(LogLevel::Warn, "{}", msg);
+                }
+                _ => {
+                    let msg = format!(
+                        "Hello {}, your role is {} and your token expires in {} seconds.",
+                        username.cyan().bold(),
+                        role.to_str().green().bold(),
+                        expires
+                    );
+                    log!(LogLevel::Info, "{}", msg);
+                }
             }
         }
     } else {
         log!(
             LogLevel::Error,
-            "Failed to identify user: {}",
-            response.text().await?
+            "{}",
+            format!(
+                "Failed to identify user: {}",
+                response.text().await.unwrap_or_default()
+            )
+            .red()
         );
     }
 
     Ok(())
 }
 
-pub async fn login(email: String, password: String) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn login(email: &String, password: &String) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let response = client
         .post(&format!("{}auth/login", get_base_url()))
@@ -106,8 +129,11 @@ pub async fn login(email: String, password: String) -> Result<(), Box<dyn std::e
         let (auth, refresh): (&str, &str) = match (token, refresh) {
             (Some(token), Some(refresh)) => (token, refresh),
             _ => {
-                log!(LogLevel::Error, "Failed to parse both refresh and auth token");
-                return Err("Login failed".into())
+                log!(
+                    LogLevel::Error,
+                    "Failed to parse both refresh and auth token"
+                );
+                return Err("Login failed".into());
             }
         };
 
@@ -120,7 +146,6 @@ pub async fn login(email: String, password: String) -> Result<(), Box<dyn std::e
         log!(LogLevel::Info, "Login successful, token acquired.");
         save_credentials(&email, &password)?;
         return Ok(());
-        
     }
 
     Err("Login failed".into())

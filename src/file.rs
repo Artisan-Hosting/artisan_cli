@@ -1,5 +1,5 @@
-use std::{env, fs};
 use std::fs::create_dir_all;
+use std::{env, fs};
 
 use artisan_middleware::dusa_collection_utils::log;
 use artisan_middleware::dusa_collection_utils::logger::LogLevel;
@@ -85,17 +85,18 @@ pub async fn get_token() -> Result<String, Box<dyn std::error::Error>> {
                     if let Some(new_token) = json.get("auth").and_then(|t| t.as_str()) {
                         update_env_file("API_TOKEN", new_token)?;
                         env::set_var("API_TOKEN", new_token);
-                        return env::var("API_TOKEN").map_err(|_| "Failed to refresh token.".into());    
+                        return env::var("API_TOKEN")
+                            .map_err(|_| "Failed to refresh token.".into());
                     }
                 } else {
                     log!(LogLevel::Warn, "Failed to refresh session, logging back in");
                     let (email, password) = load_credentials()?;
-                    login(email, password).await?;
-                    return env::var("API_TOKEN").map_err(|_| "Failed to refresh token.".into());    
+                    login(&email, &password).await?;
+                    return env::var("API_TOKEN").map_err(|_| "Failed to refresh token.".into());
                 }
             }
         }
-    } 
+    }
 
     Ok(token)
 }
@@ -104,7 +105,7 @@ pub fn update_env_file(key: &str, value: &str) -> Result<(), Box<dyn std::error:
     let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
     let mut env_path = home_dir.join(".artisan_cli");
     env_path = env_path.join(".env");
-    
+
     let mut content = if std::path::Path::new(&env_path).exists() {
         fs::read_to_string(env_path.clone())?
     } else {
