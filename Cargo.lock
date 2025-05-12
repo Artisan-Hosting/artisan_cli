@@ -192,6 +192,8 @@ dependencies = [
 [[package]]
 name = "artisan_middleware"
 version = "5.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b59f17e520cb00d798dcb807b36fc479df9aacc4a14b5119927e006435b427bc"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

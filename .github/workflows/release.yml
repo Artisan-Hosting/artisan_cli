@@ -7,10 +7,15 @@ on:
 
 jobs:
   build:
+    name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v3
@@ -19,19 +24,20 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+          target: ${{ matrix.target }}
 
       - name: Build binary
-        run: cargo build --release
+        run: cargo build --release --target=${{ matrix.target }}
 
       - name: Archive binary
         run: |
           mkdir dist
-          cp target/release/artisan_cli dist/
+          cp target/${{ matrix.target }}/release/artisan_cli* dist/
           cd dist
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a ../artisan_cli-${{ runner.os }}.zip artisan_cli.exe
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            7z a ../artisan_cli-${{ matrix.target }}.zip artisan_cli.exe
           else
-            tar -czf ../artisan_cli-${{ runner.os }}.tar.gz artisan_cli
+            tar -czf ../artisan_cli-${{ matrix.target }}.tar.gz artisan_cli
           fi
 
       - name: Upload release asset
@@ -40,5 +46,43 @@ jobs:
           files: |
             artisan_cli-*.zip
             artisan_cli-*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  macos-universal:
+    name: Build macOS Universal Binary
+    runs-on: macos-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: |
+            x86_64-apple-darwin
+            aarch64-apple-darwin
+
+      - name: Build for x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Build for aarch64
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Create Universal 2 Binary
+        run: |
+          mkdir -p dist
+          lipo -create \
+            target/x86_64-apple-darwin/release/artisan_cli \
+            target/aarch64-apple-darwin/release/artisan_cli \
+            -output dist/artisan_cli
+          tar -czf artisan_cli-macos-universal.tar.gz -C dist artisan_cli
+
+      - name: Upload Universal macOS Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artisan_cli-macos-universal.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

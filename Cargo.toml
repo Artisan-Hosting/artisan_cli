@@ -23,6 +23,7 @@ crossterm = "0.27"
 ratatui = { version = "0.26", features = ["crossterm"] }
 
 [dependencies.artisan_middleware]
-path = "/root/artisan_lib"
+#path = "/root/artisan_lib"
+version = "5.4.0"
 default-features = false
 features = ["cli"]
