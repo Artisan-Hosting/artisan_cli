@@ -24,6 +24,8 @@ pub enum TopLevelCommand {
     Instance(InstanceCmd),
     #[command(subcommand)]
     Auth(AuthCmd),
+    #[command(subcommand)]
+    GitConfig(GitConfigCmd),
     Logs {
         instance_id: String,
         #[arg(short, long, default_value = "100")]
@@ -35,6 +37,80 @@ pub enum TopLevelCommand {
 pub enum NodeCmd {
     List,
     Get { node_id: String },
+    Reload { node_id: String },
+    WatchdogGet {
+        node_id: String,
+        #[arg(long, short)]
+        application: String,
+        #[arg(long, short)]
+        kind: String,
+        #[arg(long, short)]
+        create_if_missing: bool,
+    },
+    WatchdogSet {
+        node_id: String,
+        #[arg(long, short)]
+        application: String,
+        #[arg(long, short)]
+        kind: String,
+        #[arg(long, short)]
+        file: Option<String>,
+        #[arg(long, short)]
+        content: Option<String>,
+        #[arg(long, short, default_value = "")]
+        expected_previous_sha256: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum GitConfigCmd {
+    Get {
+        node_id: String,
+    },
+    Set {
+        node_id: String,
+        #[arg(long, short)]
+        file: Option<String>,
+        #[arg(long, short)]
+        json: Option<String>,
+    },
+    Add {
+        node_id: String,
+        #[arg(long)]
+        user: String,
+        #[arg(long)]
+        repo: String,
+        #[arg(long)]
+        branch: String,
+        #[arg(long)]
+        server: String,
+        #[arg(long)]
+        token: Option<String>,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        reload: bool,
+    },
+    Update {
+        node_id: String,
+        id: String,
+        #[arg(long)]
+        user: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long)]
+        server: Option<String>,
+        #[arg(long)]
+        token: Option<String>,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        reload: bool,
+    },
+    Remove {
+        node_id: String,
+        id: String,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        reload: bool,
+    },
 }
 
 #[derive(Subcommand)]

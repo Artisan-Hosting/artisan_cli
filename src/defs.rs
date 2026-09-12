@@ -103,3 +103,17 @@ pub struct NodeSummaryRow {
     #[tabled(rename = "Last Updated")]
     pub last_updated: String,
 }
+
+#[derive(Tabled)]
+pub struct GitRepoRow {
+    #[tabled(rename = "Repo ID")]
+    pub id: String,
+    #[tabled(rename = "User/Org")]
+    pub user: String,
+    #[tabled(rename = "Repository")]
+    pub repo: String,
+    #[tabled(rename = "Branch")]
+    pub branch: String,
+    #[tabled(rename = "Server")]
+    pub server: String,
+}

@@ -21,6 +21,9 @@ ratatui = { version = "0.26", features = ["crossterm"] }
 
 [dependencies.artisan_middleware]
 #path = "/root/artisan_lib"
-version = "5.4.0"
+version = "^5.7.1"
 default-features = false
 features = ["cli"]
+
+[dependencies.artisan_keystore]
+version = "2.1.0"
