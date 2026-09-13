@@ -6,8 +6,8 @@ use artisan_middleware::{
         log,
         core::logger::{set_log_level, LogLevel},
     }, portal::{
-        ApiResponse, CommandResponse, InstanceLogResponse, NodeDetails, NodeInfo, RunnerDetails,
-        RunnerHealth, RunnerSummary, NodeReloadResult,
+        ApiResponse, CommandResponse, ErrorInfo, InstanceLogResponse, NodeDetails, NodeInfo,
+        RunnerDetails, RunnerHealth, RunnerSummary, NodeReloadResult,
     }, timestamp::format_unix_timestamp
 };
 use auth::{discover, login, whoami};
@@ -119,6 +119,8 @@ async fn show_logs(lines: u64, instance_id: &str) -> Result<(), Box<dyn std::err
             });
 
             print_logs(line_array, format!("{} Logs ('q' to quit)", instance_id))?;
+        } else {
+            report_empty_data(&api_response.errors, "No logs returned for that instance.");
         }
     } else {
         log!(
@@ -161,9 +163,9 @@ async fn list_nodes() -> Result<(), Box<dyn std::error::Error>> {
             table = style_table(&mut table, Some(2), true);
             display_table(&table);
         } else {
-            log!(
-                LogLevel::Error,
-                "Get a drink. Currently there are no nodes registered"
+            report_empty_data(
+                &api_response.errors,
+                "Get a drink. Currently there are no nodes registered",
             );
         }
     } else {
@@ -205,7 +207,7 @@ async fn get_node(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
             table = style_table(&mut table, Some(1), true); // Color status column, center align
             display_table(&table);
         } else {
-            log!(LogLevel::Info, "Node not found.");
+            report_empty_data(&api_response.errors, "Node not found.");
         }
     } else {
         log!(
@@ -248,7 +250,7 @@ async fn get_instance_usage(instance_id: &str) -> Result<(), Box<dyn std::error:
             table = style_table(&mut table, Some(1), true);
             display_table(&table);
         } else {
-            log!(LogLevel::Warn, "No usage summary found.");
+            report_empty_data(&api_response.errors, "No usage summary found.");
         }
     } else {
         log!(
@@ -291,7 +293,7 @@ async fn get_runner_usage(runner_id: &str) -> Result<(), Box<dyn std::error::Err
             table = style_table(&mut table, Some(1), true);
             display_table(&table);
         } else {
-            log!(LogLevel::Warn, "No usage summary found.");
+            report_empty_data(&api_response.errors, "No usage summary found.");
         }
     } else {
         log!(
@@ -427,7 +429,7 @@ async fn list_runners() -> Result<(), Box<dyn std::error::Error>> {
                 display_table(&table);
             }
         } else {
-            log!(LogLevel::Error, "No runners found");
+            report_empty_data(&api_response.errors, "No runners found.");
         }
     } else {
         log!(
@@ -486,7 +488,7 @@ async fn get_runner_details(runner_id: &str) -> Result<(), Box<dyn std::error::E
             table = style_table(&mut table, Some(1), false);
             display_table(&table);
         } else {
-            log!(LogLevel::Error, "Runner not found.");
+            report_empty_data(&api_response.errors, "Runner not found.");
         }
     } else {
         log!(
@@ -558,6 +560,24 @@ fn get_base_url() -> &'static str {
     "https://api.artisanhosting.net/v1/"
 }
 
+/// Reports a response whose `data` came back null.
+///
+/// The portal answers a failure with HTTP 200 and an envelope carrying the
+/// reason in `errors`, so a null `data` is as likely to be a real error as an
+/// empty result. Printing `empty_message` unconditionally turned "the org
+/// lookup timed out" into "no runners found", which sends you looking in the
+/// wrong place; say what the server actually said whenever it said anything.
+fn report_empty_data(errors: &[ErrorInfo], empty_message: &str) {
+    if errors.is_empty() {
+        log!(LogLevel::Warn, "{}", empty_message);
+        return;
+    }
+
+    for error in errors {
+        log!(LogLevel::Error, "{:?}: {}", error.code, error.message);
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct LocalRepoEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -621,7 +641,7 @@ async fn reload_node(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
                 log!(LogLevel::Warn, "Node {} reload returned false.", node_id);
             }
         } else {
-            log!(LogLevel::Warn, "Node reload response has no data.");
+            report_empty_data(&api_response.errors, "Node reload response has no data.");
         }
     } else {
         log!(
@@ -649,6 +669,9 @@ async fn handle_git_config(git_cmd: &GitConfigCmd) -> Result<(), Box<dyn std::er
         }
         GitConfigCmd::Remove { node_id, id, reload } => {
             remove_git_config(node_id, id, *reload).await?;
+        }
+        GitConfigCmd::Audit { node_id } => {
+            audit_git_config(node_id).await?;
         }
     }
     Ok(())
@@ -687,7 +710,7 @@ async fn get_git_config(node_id: &str) -> Result<(), Box<dyn std::error::Error>>
                 display_table(&table);
             }
         } else {
-            log!(LogLevel::Warn, "No git config data found.");
+            report_empty_data(&api_response.errors, "No git config data found.");
         }
     } else {
         log!(
@@ -840,6 +863,51 @@ async fn remove_git_config(
     send_git_config_request(node_id, payload).await
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct LocalAuditOutcome {
+    pub repos_considered: usize,
+    pub stale_checkouts_removed: usize,
+    pub stale_state_files_removed: usize,
+    pub errors: Vec<String>,
+}
+
+async fn audit_git_config(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let token = get_token().await?;
+
+    let response = client
+        .post(&format!("{}node/{}/git-config", get_base_url(), node_id))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "op": "audit" }))
+        .send()
+        .await?;
+
+    if response.status().is_success() {
+        let api_response: ApiResponse<LocalAuditOutcome> = response.json().await?;
+        if let Some(outcome) = api_response.data {
+            log!(
+                LogLevel::Info,
+                "Audit complete: {} repo(s) considered, {} stale checkout(s) removed, {} stale state file(s) removed",
+                outcome.repos_considered,
+                outcome.stale_checkouts_removed,
+                outcome.stale_state_files_removed
+            );
+            for err in &outcome.errors {
+                log!(LogLevel::Warn, "Audit reported: {}", err);
+            }
+        } else {
+            report_empty_data(&api_response.errors, "No audit result returned.");
+        }
+    } else {
+        log!(
+            LogLevel::Error,
+            "Failed to run git repo audit: {}",
+            response.text().await?
+        );
+    }
+    Ok(())
+}
+
 async fn send_git_config_request(
     node_id: &str,
     payload: serde_json::Value,
@@ -876,7 +944,10 @@ async fn send_git_config_request(
                 );
             }
         } else {
-            log!(LogLevel::Warn, "Operation succeeded but response had no data.");
+            report_empty_data(
+                &api_response.errors,
+                "Operation succeeded but response had no data.",
+            );
         }
     } else {
         log!(
@@ -946,7 +1017,7 @@ async fn get_watchdog_config(
         if let Some(data) = api_response.data {
             println!("{}", serde_json::to_string_pretty(&data)?);
         } else {
-            log!(LogLevel::Warn, "Watchdog config response has no data.");
+            report_empty_data(&api_response.errors, "Watchdog config response has no data.");
         }
     } else {
         log!(
@@ -998,7 +1069,10 @@ async fn set_watchdog_config(
             log!(LogLevel::Info, "Watchdog config updated successfully.");
             println!("{}", serde_json::to_string_pretty(&data)?);
         } else {
-            log!(LogLevel::Warn, "Watchdog config update returned success but had no data.");
+            report_empty_data(
+                &api_response.errors,
+                "Watchdog config update returned success but had no data.",
+            );
         }
     } else {
         log!(

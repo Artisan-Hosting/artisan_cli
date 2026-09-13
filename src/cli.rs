@@ -111,6 +111,13 @@ pub enum GitConfigCmd {
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         reload: bool,
     },
+    /// Force a resync/clean of every configured checkout on a node, plus a
+    /// purge of any stale `/opt/artisan/tmp` state file left over from a repo
+    /// no longer in git.cf. The same thing a write already triggers as a
+    /// side effect, just on demand -- doesn't touch git.cf itself.
+    Audit {
+        node_id: String,
+    },
 }
 
 #[derive(Subcommand)]
