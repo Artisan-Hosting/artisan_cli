@@ -43,13 +43,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match cli.command {
             TopLevelCommand::Node(ref node_cmd) => match node_cmd {
                 NodeCmd::List => list_nodes().await?,
-                NodeCmd::Get { node_id } => get_node(&node_id).await?,
-                NodeCmd::Reload { node_id } => reload_node(&node_id).await?,
+                NodeCmd::Get { node_id } => get_node(*node_id).await?,
+                NodeCmd::Reload { node_id } => reload_node(*node_id).await?,
                 NodeCmd::WatchdogGet { node_id, application, kind, create_if_missing } => {
-                    get_watchdog_config(node_id, application, kind, *create_if_missing).await?
+                    get_watchdog_config(*node_id, application, kind, *create_if_missing).await?
                 }
                 NodeCmd::WatchdogSet { node_id, application, kind, file, content, expected_previous_sha256 } => {
-                    set_watchdog_config(node_id, application, kind, file.as_deref(), content.as_deref(), expected_previous_sha256).await?
+                    set_watchdog_config(*node_id, application, kind, file.as_deref(), content.as_deref(), expected_previous_sha256).await?
                 }
             },
             TopLevelCommand::GitConfig(ref git_cmd) => handle_git_config(git_cmd).await?,
@@ -179,7 +179,7 @@ async fn list_nodes() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn get_node(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn get_node(node_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let token = get_token().await?;
 
@@ -622,7 +622,7 @@ pub struct LocalReposResponse {
     pub moved: Option<LocalMovedId>,
 }
 
-async fn reload_node(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn reload_node(node_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let token = get_token().await?;
 
@@ -656,28 +656,28 @@ async fn reload_node(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
 async fn handle_git_config(git_cmd: &GitConfigCmd) -> Result<(), Box<dyn std::error::Error>> {
     match git_cmd {
         GitConfigCmd::Get { node_id } => {
-            get_git_config(node_id).await?;
+            get_git_config(*node_id).await?;
         }
         GitConfigCmd::Set { node_id, file, json } => {
-            set_git_config(node_id, file.as_deref(), json.as_deref()).await?;
+            set_git_config(*node_id, file.as_deref(), json.as_deref()).await?;
         }
         GitConfigCmd::Add { node_id, user, repo, branch, server, token, reload } => {
-            add_git_config(node_id, user, repo, branch, server, token.as_deref(), *reload).await?;
+            add_git_config(*node_id, user, repo, branch, server, token.as_deref(), *reload).await?;
         }
         GitConfigCmd::Update { node_id, id, user, repo, branch, server, token, reload } => {
-            update_git_config(node_id, id, user.as_deref(), repo.as_deref(), branch.as_deref(), server.as_deref(), token.as_deref(), *reload).await?;
+            update_git_config(*node_id, id, user.as_deref(), repo.as_deref(), branch.as_deref(), server.as_deref(), token.as_deref(), *reload).await?;
         }
         GitConfigCmd::Remove { node_id, id, reload } => {
-            remove_git_config(node_id, id, *reload).await?;
+            remove_git_config(*node_id, id, *reload).await?;
         }
         GitConfigCmd::Audit { node_id } => {
-            audit_git_config(node_id).await?;
+            audit_git_config(*node_id).await?;
         }
     }
     Ok(())
 }
 
-async fn get_git_config(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn get_git_config(node_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let token = get_token().await?;
 
@@ -723,7 +723,7 @@ async fn get_git_config(node_id: &str) -> Result<(), Box<dyn std::error::Error>>
 }
 
 async fn set_git_config(
-    node_id: &str,
+    node_id: u64,
     file: Option<&str>,
     json_str: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -751,7 +751,7 @@ async fn set_git_config(
 }
 
 async fn add_git_config(
-    node_id: &str,
+    node_id: u64,
     user: &str,
     repo: &str,
     branch: &str,
@@ -777,7 +777,7 @@ async fn add_git_config(
 }
 
 async fn update_git_config(
-    node_id: &str,
+    node_id: u64,
     id: &str,
     user: Option<&str>,
     repo_name: Option<&str>,
@@ -850,7 +850,7 @@ async fn update_git_config(
 }
 
 async fn remove_git_config(
-    node_id: &str,
+    node_id: u64,
     id: &str,
     reload: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -871,7 +871,7 @@ pub struct LocalAuditOutcome {
     pub errors: Vec<String>,
 }
 
-async fn audit_git_config(node_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn audit_git_config(node_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let token = get_token().await?;
 
@@ -909,7 +909,7 @@ async fn audit_git_config(node_id: &str) -> Result<(), Box<dyn std::error::Error
 }
 
 async fn send_git_config_request(
-    node_id: &str,
+    node_id: u64,
     payload: serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
@@ -991,7 +991,7 @@ pub struct SetWatchdogConfigRequest {
 }
 
 async fn get_watchdog_config(
-    node_id: &str,
+    node_id: u64,
     application: &str,
     kind: &str,
     create_if_missing: bool,
@@ -1030,7 +1030,7 @@ async fn get_watchdog_config(
 }
 
 async fn set_watchdog_config(
-    node_id: &str,
+    node_id: u64,
     application: &str,
     kind: &str,
     file: Option<&str>,

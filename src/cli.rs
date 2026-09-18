@@ -36,10 +36,10 @@ pub enum TopLevelCommand {
 #[derive(Subcommand)]
 pub enum NodeCmd {
     List,
-    Get { node_id: String },
-    Reload { node_id: String },
+    Get { node_id: u64 },
+    Reload { node_id: u64 },
     WatchdogGet {
-        node_id: String,
+        node_id: u64,
         #[arg(long, short)]
         application: String,
         #[arg(long, short)]
@@ -48,7 +48,7 @@ pub enum NodeCmd {
         create_if_missing: bool,
     },
     WatchdogSet {
-        node_id: String,
+        node_id: u64,
         #[arg(long, short)]
         application: String,
         #[arg(long, short)]
@@ -65,17 +65,17 @@ pub enum NodeCmd {
 #[derive(Subcommand)]
 pub enum GitConfigCmd {
     Get {
-        node_id: String,
+        node_id: u64,
     },
     Set {
-        node_id: String,
+        node_id: u64,
         #[arg(long, short)]
         file: Option<String>,
         #[arg(long, short)]
         json: Option<String>,
     },
     Add {
-        node_id: String,
+        node_id: u64,
         #[arg(long)]
         user: String,
         #[arg(long)]
@@ -90,7 +90,7 @@ pub enum GitConfigCmd {
         reload: bool,
     },
     Update {
-        node_id: String,
+        node_id: u64,
         id: String,
         #[arg(long)]
         user: Option<String>,
@@ -106,7 +106,7 @@ pub enum GitConfigCmd {
         reload: bool,
     },
     Remove {
-        node_id: String,
+        node_id: u64,
         id: String,
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         reload: bool,
@@ -116,7 +116,7 @@ pub enum GitConfigCmd {
     /// no longer in git.cf. The same thing a write already triggers as a
     /// side effect, just on demand -- doesn't touch git.cf itself.
     Audit {
-        node_id: String,
+        node_id: u64,
     },
 }
 
